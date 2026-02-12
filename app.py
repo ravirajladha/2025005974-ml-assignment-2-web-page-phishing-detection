@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
-import json
-
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -18,7 +15,7 @@ from src.utils import MODEL_DIR, ARTIFACTS_DIR, load_json, infer_target_column
 st.set_page_config(page_title="Phishing Detection ML App", layout="wide")
 
 st.title("🛡️ Web Page Phishing Detection")
-st.caption("Upload CSV → select model → view metrics → confusion matrix/report → get predictions.")
+st.caption("Upload CSV → pick a model → see metrics + confusion matrix → generate predictions.")
 
 
 # -----------------------------
@@ -26,7 +23,6 @@ st.caption("Upload CSV → select model → view metrics → confusion matrix/re
 # -----------------------------
 metrics_path = MODEL_DIR / "metrics.json"
 reports_path = MODEL_DIR / "reports.json"
-
 metrics = load_json(metrics_path) if metrics_path.exists() else {}
 reports = load_json(reports_path) if reports_path.exists() else {}
 
@@ -63,6 +59,7 @@ def get_report_for_model(reports_dict: dict, key: str) -> dict:
 
     return out
 
+
 def align_features_for_model(X: pd.DataFrame, expected_cols: list[str]) -> pd.DataFrame:
     """
     Rename common phishing feature column variants and align to expected columns.
@@ -70,7 +67,7 @@ def align_features_for_model(X: pd.DataFrame, expected_cols: list[str]) -> pd.Da
     Extra columns are dropped.
     """
     rename_map = {
-        # your sample -> training expected
+        # sample -> training expected
         "length_url": "url_length",
         "nb_dots": "n_dots",
         "nb_hyphens": "n_hypens",
@@ -88,23 +85,24 @@ def align_features_for_model(X: pd.DataFrame, expected_cols: list[str]) -> pd.Da
         "nb_space": "n_space",
         "nb_star": "n_asterisk",
         "nb_dollar": "n_dollar",
-        # sometimes:
         "nb_redirection": "n_redirection",
-        "nb_hashtag": "n_hastag",   # common misspelling in datasets
+        "nb_hashtag": "n_hastag",
         "nb_hastag": "n_hastag",
     }
 
     X2 = X.copy()
     X2 = X2.rename(columns={c: rename_map.get(c, c) for c in X2.columns})
 
-    # Create missing expected columns as 0
-    for c in expected_cols:
-        if c not in X2.columns:
-            X2[c] = 0
+    missing = [c for c in expected_cols if c not in X2.columns]
+    for c in missing:
+        X2[c] = 0
 
-    # Keep only expected columns in the right order
-    X2 = X2[expected_cols]
-    return X2
+    extra = [c for c in X2.columns if c not in expected_cols]
+    if extra:
+        X2 = X2.drop(columns=extra)
+
+    return X2[expected_cols]
+
 
 def plot_confusion_matrix(cm, labels=None):
     cm = np.array(cm)
@@ -130,10 +128,21 @@ def plot_confusion_matrix(cm, labels=None):
 
 def pretty_model_table(metrics_dict: dict) -> pd.DataFrame:
     dfm = pd.DataFrame(metrics_dict).T.reset_index().rename(columns={"index": "model"})
-    # Optional: order columns if present
     preferred = ["model", "accuracy", "auc", "precision", "recall", "f1", "mcc"]
     cols = [c for c in preferred if c in dfm.columns] + [c for c in dfm.columns if c not in preferred]
     return dfm[cols]
+
+
+def render_metric_cards(m: dict):
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Accuracy", f"{m.get('accuracy', 0):.4f}")
+    c2.metric("AUC", f"{m.get('auc', 0):.4f}")
+    c3.metric("MCC", f"{m.get('mcc', 0):.4f}")
+
+    c4, c5, c6 = st.columns(3)
+    c4.metric("Precision", f"{m.get('precision', 0):.4f}")
+    c5.metric("Recall", f"{m.get('recall', 0):.4f}")
+    c6.metric("F1", f"{m.get('f1', 0):.4f}")
 
 
 # -----------------------------
@@ -150,119 +159,135 @@ model_map = {
 
 
 # -----------------------------
-# Sidebar controls
+# Sidebar
 # -----------------------------
 with st.sidebar:
-    st.header("Controls")
+    st.header("🧰 Controls")
+
     uploaded = st.file_uploader("Upload CSV (test data preferred)", type=["csv"])
+
     model_name = st.selectbox("Choose a model", list(model_map.keys()))
-    show_all = st.checkbox("Show comparison table (all models)", value=True)
+    key = model_map[model_name]
+    artifact_file = ARTIFACTS_DIR / f"{key}.joblib"
 
-key = model_map[model_name]
-artifact_file = ARTIFACTS_DIR / f"{key}.joblib"
+    st.divider()
+    st.subheader("Status")
+    st.write("✅ metrics.json" if metrics else "⚠️ metrics.json missing")
+    st.write("✅ reports.json" if reports else "⚠️ reports.json missing")
+    st.write("✅ model artifact" if artifact_file.exists() else "⚠️ model artifact missing")
+
+    if uploaded is not None:
+        st.caption(f"Uploaded: `{uploaded.name}`")
 
 
 # -----------------------------
-# Top layout (metrics + model details)
+# Tabs layout
 # -----------------------------
-colA, colB = st.columns([1.1, 1])
+tab1, tab2, tab3 = st.tabs(["🏁 Leaderboard", "🔍 Model Insights", "⚙️ Predict"])
 
-with colA:
-    if show_all and metrics:
-        st.subheader("Model comparison")
+
+# -----------------------------
+# Tab 1: Leaderboard
+# -----------------------------
+with tab1:
+    st.subheader("Model comparison")
+
+    if metrics:
         dfm = pretty_model_table(metrics)
-        st.dataframe(dfm, use_container_width=True)
-    else:
-        st.info("Metrics table hidden or metrics.json not found yet.")
+        st.dataframe(dfm, width="stretch")
 
-with colB:
-    st.subheader(f"Selected: {model_name}")
+        # highlight best by accuracy (simple)
+        if "accuracy" in dfm.columns:
+            best_row = dfm.sort_values("accuracy", ascending=False).head(1)
+            best_model = best_row["model"].iloc[0]
+            best_acc = best_row["accuracy"].iloc[0]
+            st.success(f"Best by Accuracy: **{best_model}** (accuracy={best_acc:.4f}) ✅")
+    else:
+        st.info("No metrics found yet. Train models to populate metrics.json.")
+
+
+# -----------------------------
+# Tab 2: Model Insights
+# -----------------------------
+with tab2:
+    st.subheader(f"Selected model: {model_name}")
 
     if metrics and key in metrics:
-        m = metrics[key]
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Accuracy", f"{m.get('accuracy', 0):.4f}")
-        c2.metric("AUC", f"{m.get('auc', 0):.4f}")
-        c3.metric("MCC", f"{m.get('mcc', 0):.4f}")
-
-        c4, c5, c6 = st.columns(3)
-        c4.metric("Precision", f"{m.get('precision', 0):.4f}")
-        c5.metric("Recall", f"{m.get('recall', 0):.4f}")
-        c6.metric("F1", f"{m.get('f1', 0):.4f}")
+        render_metric_cards(metrics[key])
     else:
-        st.warning("No metrics found for this model. Train models first.")
+        st.warning("No metrics found for this model.")
 
-    # Confusion matrix + report (from training) shown even without upload
+    st.divider()
+
     rep = get_report_for_model(reports, key)
-    with st.expander("📌 Confusion matrix & classification report (from training)", expanded=True):
+
+    left, right = st.columns([1, 1])
+
+    with left:
+        st.subheader("Confusion matrix")
         cm = rep.get("confusion_matrix") or rep.get("cm")
         if cm is not None:
             plot_confusion_matrix(cm, labels=rep.get("labels"))
         else:
-            st.info("Confusion matrix not found in reports.json for this model.")
+            st.info("Confusion matrix not found in reports.json.")
 
+    with right:
+        st.subheader("Classification report")
         cr = rep.get("classification_report") or rep.get("report")
         if cr is not None:
-            st.subheader("Classification report")
             if isinstance(cr, dict):
                 st.json(cr)
             else:
                 st.code(str(cr))
         else:
-            st.info("Classification report not found in reports.json for this model.")
-
-
-st.divider()
+            st.info("Classification report not found in reports.json.")
 
 
 # -----------------------------
-# Prediction section
+# Tab 3: Predict
 # -----------------------------
-if uploaded is None:
-    st.write("📎 Upload a CSV to run predictions.")
-else:
-    if not artifact_file.exists():
+with tab3:
+    st.subheader("Run predictions on an uploaded CSV")
+
+    if uploaded is None:
+        st.info("📎 Upload a CSV from the sidebar to run predictions.")
+    elif not artifact_file.exists():
         st.error(f"Missing model artifact: {artifact_file}. Train models first.")
     else:
         df = pd.read_csv(uploaded)
 
         st.subheader("Uploaded data preview")
-        st.dataframe(df.head(20), use_container_width=True)
+        st.dataframe(df.head(20), width="stretch")
 
-        # If label exists, drop it for prediction
         target = infer_target_column(df.columns.tolist())
         has_label = target in df.columns
-
         X = df.drop(columns=[target]) if has_label else df
 
         pipe = load(artifact_file)
 
-        # Align columns to what the model expects
         if hasattr(pipe, "feature_names_in_"):
             expected = list(pipe.feature_names_in_)
             X_for_pred = align_features_for_model(X, expected)
         else:
-            # fallback: try as-is
             X_for_pred = X
 
-        preds = pipe.predict(X_for_pred)
+        with st.spinner("Predicting..."):
+            preds = pipe.predict(X_for_pred)
 
-
-        # Some models might not support predict_proba; guard it
-        if hasattr(pipe, "predict_proba"):
-            try:
-                proba = pipe.predict_proba(X_for_pred)[:, 1]
-            except Exception:
-                proba = None
-
+            proba = None
+            if hasattr(pipe, "predict_proba"):
+                try:
+                    proba = pipe.predict_proba(X_for_pred)[:, 1]
+                except Exception:
+                    proba = None
 
         out = df.copy()
         out["pred_label"] = preds
         if proba is not None:
             out["pred_proba"] = proba
 
-        st.subheader("Predictions")
-        st.dataframe(out.head(50), use_container_width=True)
+        st.subheader("Predictions output")
+        st.dataframe(out.head(50), width="stretch")
 
         st.download_button(
             "⬇️ Download predictions CSV",
@@ -270,3 +295,5 @@ else:
             file_name="predictions.csv",
             mime="text/csv",
         )
+
+        st.caption("Tip: If your CSV has different column names, the app auto-maps common variants.")
