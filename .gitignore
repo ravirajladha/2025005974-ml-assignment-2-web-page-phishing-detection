@@ -1,0 +1,18 @@
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# data (don’t push big datasets)
+data/
+*.csv
+
+# model artifacts (we WILL commit artifacts later for deployment)
+# (leave this commented for now)
+# model/artifacts/
+
+# OS / IDE
+.DS_Store
+.vscode/
+.idea/
