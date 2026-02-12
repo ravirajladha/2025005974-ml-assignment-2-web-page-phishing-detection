@@ -1,7 +1,8 @@
-numpy
-pandas
+numpy: 2.0.2
+pandas: 2.2.2
 scikit-learn
 xgboost
-joblib
+joblib: 1.5.3
 streamlit
 matplotlib
+sklearn: 1.6.1
