@@ -82,7 +82,13 @@ def main():
         "dt": DecisionTreeClassifier(random_state=args.seed),
         "knn": KNeighborsClassifier(n_neighbors=7),
         "nb": GaussianNB(),
-        "rf": RandomForestClassifier(n_estimators=300, random_state=args.seed, n_jobs=-1),
+        "rf": RandomForestClassifier(
+            n_estimators=80,
+            max_depth=18,
+            min_samples_leaf=2,
+            random_state=args.seed,
+            n_jobs=-1
+        ),
         "xgb": XGBClassifier(
             n_estimators=400,
             max_depth=6,
