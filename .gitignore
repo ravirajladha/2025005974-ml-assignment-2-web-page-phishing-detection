@@ -16,4 +16,3 @@ data/
 .DS_Store
 .vscode/
 .idea/
-model/artifacts/rf.joblib
